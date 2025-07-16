@@ -75,6 +75,12 @@ impl CallTraceDecoderBuilder {
         self.with_known_contracts(identifier.contracts())
     }
 
+    /// Add a custom error to the decoder
+    pub fn with_custom_error(mut self, error: Error) -> Self {
+        self.decoder.push_error(error);
+        self
+    }
+
     /// Sets the verbosity level of the decoder.
     #[inline]
     pub fn with_verbosity(mut self, level: u8) -> Self {
