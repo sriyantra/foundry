@@ -1,5 +1,5 @@
 use alloy_json_abi::JsonAbi;
-use alloy_primitives::{Address, Bytes, map::HashMap};
+use alloy_primitives::{Address, Bytes, Selector, hex, map::HashMap};
 use eyre::{Result, WrapErr};
 use foundry_common::{
     ContractsByArtifact, TestFunctionExt, compile::ProjectCompiler, fs, selectors::SelectorKind,
@@ -374,8 +374,40 @@ pub async fn handle_traces(
 
     let mut builder = CallTraceDecoderBuilder::new()
         .with_labels(labels.chain(config_labels))
-        .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
         .with_label_disabled(disable_label);
+    
+    // Create signature identifier
+    let sig_identifier = SignaturesIdentifier::from_config(config)?;
+    
+    // Load error signatures from cache into the decoder
+    if let Some(cache_dir) = foundry_config::Config::foundry_cache_dir() {
+        let cache_path = cache_dir.join("signatures");
+        if let Ok(cache_content) = std::fs::read_to_string(&cache_path) {
+            if let Ok(cache) = serde_json::from_str::<serde_json::Value>(&cache_content) {
+                if let Some(errors) = cache["errors"].as_object() {
+                    let mut error_count = 0;
+                    for (selector_str, signature_str) in errors {
+                        if let (Ok(selector_hex), Some(sig_str)) = (hex::decode(selector_str.trim_start_matches("0x")), signature_str.as_str()) {
+                            if selector_hex.len() == 4 {
+                                let selector = Selector::from_slice(&selector_hex);
+                                // Parse the signature to create an Error object
+                                if let Ok(error) = alloy_json_abi::Error::parse(sig_str) {
+                                    builder = builder.with_custom_error(error);
+                                    error_count += 1;
+                                } else {
+                                    trace!(target: "evm::traces", "Failed to parse error signature: {}", sig_str);
+                                }
+                            }
+                        }
+                    }
+                    trace!(target: "evm::traces", "Loaded {} error signatures from cache", error_count);
+                }
+            }
+        }
+    }
+    
+    builder = builder.with_signature_identifier(sig_identifier);
+    
     let mut identifier = TraceIdentifiers::new().with_etherscan(config, chain)?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);
